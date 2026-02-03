@@ -1,137 +1,59 @@
-# Weather Agent
+# Weather AG UI
 
-AI-powered weather information specialist that provides current conditions and forecasts for any location using the Open-Meteo API.
+AG2 weather agent with A2A server and UI. Ask for current weather by city name or use your location; the agent uses Open-Meteo (no API key) for weather data and an LLM for conversation.
 
-## Overview
+## Prerequisites
 
-The Weather Agent retrieves real-time weather data and multi-day forecasts for locations worldwide. It provides temperature, precipitation, wind conditions, humidity, and other meteorological data through natural language queries, making weather information accessible without manual lookups.
+- **Python** 3.10–3.13
+- **Node.js** and **pnpm** (for the UI)
+- **OpenAI API key** (for the agent LLM)
 
-## Authentication
+## Run the project
 
-No API key required. The agent uses the Open-Meteo API, which provides free weather data without authentication.
+You need two processes: the Python backend (agent + API) and the Next.js frontend.
 
-## Tools
+### 1. Backend (Python)
 
-The agent has direct access to weather data through the following tools:
+From the project root:
 
-| Tool | Description |
-|------|-------------|
-| `get_current_weather` | Retrieve current weather conditions for a location |
-| `get_weather_forecast` | Get multi-day weather forecast for a location |
+```bash
+# Install dependencies (uses uv)
+uv sync
 
-## Capabilities
+# Set your OpenAI API key
+export OPENAI_API_KEY="your-openai-api-key"
 
-### Current Conditions
-
-#### Temperature Data
-- Current temperature in Celsius or Fahrenheit
-- Feels-like temperature (wind chill/heat index)
-- Daily high and low temperatures
-- Temperature trends
-
-#### Precipitation
-- Current precipitation status
-- Rain probability
-- Snowfall information
-- Precipitation intensity
-
-#### Wind Conditions
-- Wind speed and direction
-- Gust speeds
-- Wind chill effects
-- Beaufort scale interpretation
-
-#### Atmospheric Data
-- Humidity levels
-- Barometric pressure
-- Visibility conditions
-- Cloud cover percentage
-
-### Weather Forecasts
-
-#### Daily Forecasts
-- Multi-day temperature predictions
-- Precipitation probability by day
-- Expected conditions summary
-- Sunrise and sunset times
-
-#### Hourly Breakdowns
-- Hour-by-hour temperature changes
-- Precipitation timing
-- Wind pattern changes
-- Detailed condition progression
-
-#### Extended Outlooks
-- 7-day forecast summaries
-- Weather trend analysis
-- Seasonal pattern context
-- Long-range predictions
-
-### Location Support
-
-#### Geographic Queries
-- City and country lookups
-- Coordinate-based queries
-- Region and state searches
-- Landmark references
-
-#### Multiple Locations
-- Compare weather across locations
-- Travel route conditions
-- Multi-city summaries
-- Regional overviews
-
-### Weather Alerts
-
-#### Condition Warnings
-- Severe weather notifications
-- Temperature extremes
-- High wind alerts
-- Precipitation warnings
-
-#### Activity Planning
-- Outdoor activity recommendations
-- Travel condition advisories
-- Event weather planning
-- Safety considerations
-
-### Data Interpretation
-
-#### Natural Language Summaries
-- Plain English weather descriptions
-- Activity-relevant summaries
-- Contextual recommendations
-- Comparative analysis
-
-#### Trend Analysis
-- Temperature change patterns
-- Storm system tracking
-- Seasonal comparisons
-- Historical context
-
-## Usage Examples
-
-```
-"What's the weather in New York?"
-"Will it rain in London tomorrow?"
-"Get the 5-day forecast for Tokyo"
-"What's the temperature in Paris right now?"
-"Is it going to snow in Denver this week?"
-"Compare weather between Miami and Seattle"
-"What should I wear for outdoor activities in Chicago today?"
-"What's the humidity level in Singapore?"
+# Start the backend on http://localhost:8000
+uv run python weather.py
 ```
 
-## Output Formats
+The backend serves the agent at `http://localhost:8000/weather/`.
 
-| Format | Content Type |
-|--------|--------------|
-| Text | `text/plain` |
+### 2. Frontend (Next.js)
 
-## Model
+In a second terminal, from the project root:
 
-Uses `gpt-4o-mini` for efficient, cost-effective responses.
+```bash
+cd ui
+pnpm install
+pnpm dev
+```
 
-## Endpoint
+The app will be at **http://localhost:3000**. The UI talks to the backend at `http://localhost:8000/weather/`, so keep the backend running.
 
-`/weather/` - Weather information and forecast operations
+### 3. Use the app
+
+Open http://localhost:3000 in your browser and ask for weather, e.g.:
+
+- “What’s the weather in London?”
+- “Weather in Tokyo”
+- “What’s the weather here?” (uses browser location if allowed)
+
+## Summary
+
+| Component   | Command              | URL                    |
+|------------|----------------------|------------------------|
+| Backend    | `uv run python weather.py` | http://localhost:8000 |
+| Frontend   | `cd ui && pnpm dev`  | http://localhost:3000  |
+
+Weather data is from [Open-Meteo](https://open-meteo.com/) (no API key). The chatbot uses the OpenAI API; set `OPENAI_API_KEY` before starting the backend.
