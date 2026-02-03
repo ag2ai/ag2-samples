@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* CopilotKit chat – ChatGPT-like dark mode (Tailwind-style overrides) */
+
+/* User message: rounded bubble with background */
+.copilot-chat-dark .copilotKitMessage.copilotKitUserMessage {
+  @apply rounded-2xl px-4 py-3;
+  background-color: rgb(52 53 65) !important;
+  color: rgb(236 236 241) !important;
+  margin-left: auto;
+  max-width: 85%;
+}
+
+/* Assistant message: no background, markdown text only */
+.copilot-chat-dark .copilotKitMessage.copilotKitAssistantMessage {
+  @apply rounded-none;
+  background: transparent !important;
+  color: rgb(236 236 241);
+  padding-left: 0;
+  max-width: 100%;
+}
+
+/* Markdown content in assistant messages – no background, readable text */
+.copilot-chat-dark .copilotKitMessage.copilotKitAssistantMessage .copilotKitMarkdownElement,
+.copilot-chat-dark .copilotKitMessage.copilotKitAssistantMessage .copilotKitMarkdown {
+  background: transparent !important;
+  color: inherit;
+}
+
+.copilot-chat-dark .copilotKitMessage.copilotKitAssistantMessage a.copilotKitMarkdownElement {
+  @apply text-blue-400 underline;
+}
+
+.copilot-chat-dark .copilotKitMessage.copilotKitAssistantMessage blockquote.copilotKitMarkdownElement {
+  border-left-color: rgb(86 88 105);
+}
