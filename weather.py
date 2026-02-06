@@ -114,6 +114,27 @@ def _fetch_current_weather_at_coords(coords: Coordinates) -> dict:
         return response.json()
 
 
+def _fetch_weekly_forecast_at_coords(coords: Coordinates) -> dict:
+    """Fetch 7-day daily forecast from Open-Meteo."""
+    params = {
+        "latitude": str(coords.latitude),
+        "longitude": str(coords.longitude),
+        "daily": [
+            "temperature_2m_max",
+            "temperature_2m_min",
+            "weather_code",
+            "precipitation_sum",
+            "precipitation_probability_max",
+        ],
+        "timezone": "auto",
+        "forecast_days": 7,
+    }
+    with httpx.Client(timeout=10.0) as client:
+        response = client.get(WEATHER_URL, params=params)
+        response.raise_for_status()
+        return response.json()
+
+
 @tool(
     description="Get the current weather at a location given its latitude and longitude. Use this when you have coordinates (e.g. from getUserLocation). Returns temperature, humidity, wind, and conditions.",
 )
@@ -163,11 +184,57 @@ def get_current_weather_by_coords(
         return {"error": f"Unexpected error: {str(e)}"}
 
 
+@tool(
+    description="Get the 7-day weather forecast at a location given its latitude and longitude. Use when the user asks about weather next week, the week ahead, or upcoming days. Use after get_coords_by_city or with coordinates from getUserLocation.",
+)
+def get_weather_next_week(
+    context_variables: ContextVariables,
+    coords: Annotated[Coordinates, "The coordinates of the location"],
+) -> dict:
+    """
+    Get the next 7 days weather forecast at coordinates.
+
+    Returns:
+        A dict with daily forecast: date, conditions, high/low temps, precipitation.
+    """
+    try:
+        if location := context_variables.get("location"):
+            coords = location.coordinates
+            location_label = f"Weekly Forecast at {location.name}, {location.country}"
+        else:
+            location_label = f"Weekly Forecast at your location ({coords.latitude:.2f}, {coords.longitude:.2f})"
+
+        data = _fetch_weekly_forecast_at_coords(coords)
+        daily = data["daily"]
+        units = data["daily_units"]
+        days = []
+        for i in range(len(daily["time"])):
+            days.append({
+                "date": daily["time"][i],
+                "conditions": _get_weather_description(daily["weather_code"][i]),
+                "tempMax": f"{daily['temperature_2m_max'][i]}{units['temperature_2m_max']}",
+                "tempMin": f"{daily['temperature_2m_min'][i]}{units['temperature_2m_min']}",
+                "precipitation": f"{daily['precipitation_sum'][i]} {units['precipitation_sum']}",
+                "precipitationProbability": f"{daily['precipitation_probability_max'][i]}{units['precipitation_probability_max']}",
+            })
+        return {
+            "location": location_label,
+            "timezone": data["timezone"],
+            "days": days,
+        }
+
+    except httpx.HTTPError as e:
+        return {"error": f"Error fetching forecast: {str(e)}"}
+    except Exception as e:
+        return {"error": f"Unexpected error: {str(e)}"}
+
+
 agent = ConversableAgent(
     name="WeatherAgent",
     description=dedent("""
         Global weather information specialist providing real-time weather conditions
-        for cities worldwide. Get current temperature, humidity, wind conditions, precipitation.
+        and 7-day forecasts for cities worldwide. Get current temperature, humidity,
+        wind conditions, precipitation, or the week ahead.
 
         Capabilities:
 
@@ -177,6 +244,10 @@ agent = ConversableAgent(
         - Humidity levels and precipitation
         - Wind speed and direction
         - Data for any city worldwide
+
+        Weekly Forecast
+        - 7-day daily forecast (high/low temps, conditions, precipitation)
+        - Use get_weather_next_week when the user asks about next week or upcoming days
 
         Location Support
         - Works with city names globally
@@ -188,7 +259,8 @@ agent = ConversableAgent(
           If getUserLocation fails (error returned), ask the user for their city name and use
           get_coords_by_city(city, country), then use get_current_weather_by_coords(coordinates).
     """),
-    system_message=dedent("""You are a helpful weather assistant. When users ask about weather,
+    system_message=dedent("""
+        You are a helpful weather assistant. When users ask about weather,
         use the available tools to fetch current conditions or forecasts.
 
         Getting the user's location:
@@ -201,17 +273,20 @@ agent = ConversableAgent(
           Which city would you like the weather for?"). Then use get_coords_by_city(city, country),
           then use get_current_weather_by_coords(coordinates).
 
-        For explicit city names: use get_coords_by_city(city, country), then use get_current_weather_by_coords(coordinates).
+        For explicit city names: use get_coords_by_city(city, country), then use get_current_weather_by_coords(coordinates) or get_weather_next_week(coordinates) for the week ahead.
+        For "weather next week", "week ahead", "next 7 days": use get_weather_next_week (after resolving location as above).
         Always be clear about which city you're reporting on. If a user's request is unclear
         (e.g. which city they mean), ask for clarification. Provide weather information in a
         clear, easy-to-read format.
 
-        After calling any tool, keep your reply minimal so the UI can render the tool result.
-        Prefer a short acknowledgment with no extra details."""),
+        After calling any tool, make a detailed reply with your information summary.
+        Your reply should be a single paragraph, not a list of items.
+        Let UI tools to render the tool result. Your text answer should be concise and informative summary."""),
     llm_config=LLMConfig({"model": "gpt-5"}),
     functions=[
         get_coords_by_city,
         get_current_weather_by_coords,
+        get_weather_next_week,
     ],
 )
 

@@ -45,6 +45,26 @@ export default function Home() {
         },
     });
 
+    useRenderToolCall({
+        name: "get_weather_next_week",
+        render: ({ status, result }) => {
+            if (status !== "complete") {
+                return (
+                    <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400 text-sm py-2">
+                        <div className="w-4 h-4 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
+                        Getting weekly forecast...
+                    </div>
+                );
+            }
+
+            if (status === "complete" && result != null) {
+                return <WeeklyForecastCard result={result} />;
+            }
+
+            return <></>;
+        },
+    });
+
     useFrontendTool({
         name: "getUserLocation",
         description:
@@ -192,7 +212,6 @@ function normalizeCurrentWeatherResult(result: unknown): CurrentWeatherResult | 
     return Object.keys(out).length > 0 ? out : null;
 }
 
-
 function CurrentWeatherCard({ result }: { result: unknown }) {
     const parsed = normalizeCurrentWeatherResult(result);
     const isError = parsed?.error;
@@ -276,6 +295,200 @@ function CurrentWeatherCard({ result }: { result: unknown }) {
                         {parsed.dataTime}
                     </p>
                 )}
+            </div>
+        </div>
+    );
+}
+
+type WeeklyForecastDay = {
+    date: string;
+    conditions: string;
+    tempMax: string;
+    tempMin: string;
+    precipitation: string;
+    precipitationProbability: string;
+};
+
+type WeeklyForecastResult = {
+    error?: string;
+    location?: string;
+    timezone?: string;
+    days?: WeeklyForecastDay[];
+};
+
+/** Extract the first balanced {...} or [...] from a string (handles nested braces and quoted content). */
+function extractFirstObjectString(str: string): string | null {
+    const start = str.indexOf("{");
+    if (start === -1) return null;
+    let depth = 0;
+    let i = start;
+    let inString = false;
+    let quoteChar: string | null = null;
+    while (i < str.length) {
+        if (inString) {
+            if (str[i] === "\\") {
+                i += 2;
+                continue;
+            }
+            if (str[i] === quoteChar) {
+                inString = false;
+                quoteChar = null;
+            }
+            i++;
+            continue;
+        }
+        if (str[i] === '"' || str[i] === "'") {
+            inString = true;
+            quoteChar = str[i];
+            i++;
+            continue;
+        }
+        if (str[i] === "{") depth++;
+        else if (str[i] === "}") {
+            depth--;
+            if (depth === 0) return str.slice(start, i + 1);
+        }
+        i++;
+    }
+    return null;
+}
+
+function normalizeWeeklyForecastResult(result: unknown): WeeklyForecastResult | null {
+    if (typeof result === "string") {
+        let toParse = result.trim().replace(/^"|"$/g, "");
+        const firstObj = extractFirstObjectString(toParse);
+        if (firstObj) toParse = firstObj;
+        try {
+            return normalizeWeeklyForecastResult(JSON.parse(toParse));
+        } catch {
+            try {
+                const jsonStr = toParse
+                    .replace(/'/g, '"')
+                    .replace(/\bNone\b/g, "null")
+                    .replace(/\bTrue\b/g, "true")
+                    .replace(/\bFalse\b/g, "false");
+                return normalizeWeeklyForecastResult(JSON.parse(jsonStr));
+            } catch {
+                return null;
+            }
+        }
+    }
+
+    if (Array.isArray(result) && result.length > 0) {
+        return normalizeWeeklyForecastResult(result[0]);
+    }
+
+    if (!result || typeof result !== "object") {
+        return null;
+    }
+
+    const data = result as Record<string, unknown>;
+    if (typeof data.error === "string") {
+        return { error: data.error };
+    }
+
+    const out: WeeklyForecastResult = {};
+    if (typeof data.location === "string") out.location = data.location;
+    if (typeof data.timezone === "string") out.timezone = data.timezone;
+    if (Array.isArray(data.days)) {
+        out.days = data.days
+            .filter((d): d is Record<string, unknown> => d != null && typeof d === "object")
+            .map((d) => ({
+                date: typeof d.date === "string" ? d.date : "",
+                conditions: typeof d.conditions === "string" ? d.conditions : "",
+                tempMax: typeof d.tempMax === "string" ? d.tempMax : "",
+                tempMin: typeof d.tempMin === "string" ? d.tempMin : "",
+                precipitation: typeof d.precipitation === "string" ? d.precipitation : "",
+                precipitationProbability:
+                    typeof d.precipitationProbability === "string" ? d.precipitationProbability : "",
+            }));
+    }
+
+    return out.location != null || (out.days != null && out.days.length > 0) ? out : null;
+}
+
+function formatForecastDate(dateStr: string): string {
+    if (!dateStr) return "";
+    try {
+        const d = new Date(dateStr);
+        return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+    } catch {
+        return dateStr;
+    }
+}
+
+function WeeklyForecastCard({ result }: { result: unknown }) {
+    const parsed = normalizeWeeklyForecastResult(result);
+    const isError = parsed?.error;
+
+    if (isError) {
+        return (
+            <div className="rounded-xl border border-red-900/50 bg-red-950/20 overflow-hidden text-sm">
+                <div className="flex items-center gap-2 px-3 py-2 border-b border-red-900/50">
+                    <span className="inline-block w-2 h-2 rounded-full shrink-0 bg-red-500" />
+                    <span className="font-medium text-red-300">Weekly forecast</span>
+                </div>
+                <p className="px-3 py-2 text-red-200/90 text-xs">{parsed?.error}</p>
+            </div>
+        );
+    }
+
+    if (!parsed?.days?.length) {
+        return (
+            <div className="rounded-xl border border-[#2e2e2e] bg-[#171717]/80 overflow-hidden text-sm">
+                <div className="flex items-center gap-2 px-3 py-2 border-b border-[#2e2e2e]">
+                    <span className="inline-block w-2 h-2 rounded-full shrink-0 bg-emerald-500" />
+                    <span className="font-medium text-gray-300">Weekly forecast</span>
+                </div>
+                <pre className="px-3 py-2 text-gray-300 whitespace-pre-wrap break-words font-mono text-xs">
+                    {JSON.stringify(result, null, 2)}
+                </pre>
+            </div>
+        );
+    }
+
+    return (
+        <div className="rounded-xl border border-[#2e2e2e] bg-[#171717]/90 overflow-hidden text-sm shadow-lg">
+            <div className="px-4 py-3 border-b border-[#2e2e2e] bg-[#1a1a1a]/80">
+                <p className="text-xs text-gray-500 uppercase tracking-wider font-medium">
+                    Weekly forecast
+                </p>
+                {parsed.location && (
+                    <p className="text-gray-200 font-medium mt-0.5">{parsed.location}</p>
+                )}
+            </div>
+            <div className="divide-y divide-[#2e2e2e]">
+                {parsed.days.map((day, i) => (
+                    <div
+                        key={day.date || i}
+                        className="px-4 py-3 flex items-center justify-between gap-4 flex-wrap"
+                    >
+                        <div className="min-w-0">
+                            <p className="text-gray-200 font-medium">
+                                {formatForecastDate(day.date) || day.date}
+                            </p>
+                            {day.conditions && (
+                                <p className="text-gray-500 text-xs mt-0.5">{day.conditions}</p>
+                            )}
+                        </div>
+                        <div className="flex items-center gap-4 shrink-0 text-right">
+                            {(day.tempMax || day.tempMin) && (
+                                <span className="text-gray-300 tabular-nums">
+                                    {day.tempMin && <span>{day.tempMin}</span>}
+                                    {day.tempMin && day.tempMax && (
+                                        <span className="text-gray-500 mx-1">→</span>
+                                    )}
+                                    {day.tempMax && <span className="font-medium">{day.tempMax}</span>}
+                                </span>
+                            )}
+                            {day.precipitationProbability && (
+                                <span className="text-gray-500 text-xs">
+                                    {day.precipitationProbability} precip
+                                </span>
+                            )}
+                        </div>
+                    </div>
+                ))}
             </div>
         </div>
     );
