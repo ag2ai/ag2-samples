@@ -283,6 +283,7 @@ agent = ConversableAgent(
         Your reply should be a single paragraph, not a list of items.
         Let UI tools to render the tool result. Your text answer should be concise and informative summary."""),
     llm_config=LLMConfig({"model": "gpt-5"}),
+    human_input_mode="NEVER",
     functions=[
         get_coords_by_city,
         get_current_weather_by_coords,
