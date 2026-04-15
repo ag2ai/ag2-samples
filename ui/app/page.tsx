@@ -3,10 +3,10 @@
 import { useState } from "react";
 import { useRenderToolCall, useFrontendTool } from "@copilotkit/react-core";
 import {
-    CopilotChat,
     CopilotKitCSSProperties,
     InputProps,
 } from "@copilotkit/react-ui";
+import { CopilotChat } from "@copilotkit/react-core/v2";
 
 export default function Home() {
     useRenderToolCall({
@@ -105,7 +105,7 @@ export default function Home() {
                         className="h-full flex-1 min-h-0"
                         labels={{
                             title: "Weather Assistant",
-                            initial:
+                            welcomeMessageText:
                                 "Hello! I'm a weather assistant and ready to help you with your weather questions.",
                         }}
                         Input={CustomInput}
