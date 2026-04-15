@@ -1,7 +1,4 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
+@import "tailwindcss";
 /* CopilotKit chat – ChatGPT-like dark mode (Tailwind-style overrides) */
 
 /* User message: rounded bubble with background */
