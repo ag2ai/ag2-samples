@@ -1,24 +1,26 @@
-import json
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from textwrap import dedent
 from typing import Annotated
 
 import httpx
-from autogen import ConversableAgent, LLMConfig
-from autogen.agentchat import ContextVariables, ReplyResult
-from autogen.ag_ui import AGUIStream
-from autogen.tools import tool
+from ag2 import Agent, Context, Variable, tool
+from ag2.ag_ui import AGUIStream
+from ag2.config import OpenAIResponsesConfig
 from fastapi import FastAPI
+from pydantic import Field
 
 # Geocoding API to convert city names to coordinates
 GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 # Open-Meteo weather API (free, no API key required)
 WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
 
+# One client for the process: a client per call would pay a TLS handshake per tool call.
+_http = httpx.AsyncClient(timeout=10.0)
+
 
 @dataclass(frozen=True)
 class Coordinates:
-    """Latitude and longitude for a location."""
+    """A latitude and longitude pair, and nothing else."""
 
     latitude: float
     longitude: float
@@ -26,7 +28,7 @@ class Coordinates:
 
 @dataclass(frozen=True)
 class Location:
-    """Location name and coordinates."""
+    """A resolved place: its name, country, region, and its coordinates."""
 
     name: str
     country: str
@@ -34,13 +36,55 @@ class Location:
     coordinates: Coordinates
 
 
-def _geocode_city(city: str, country: str = "") -> Location:
-    """Convert city name to coordinates using Open-Meteo geocoding API."""
+@dataclass(frozen=True)
+class ToolError:
+    """A failed upstream call, reported to the model and the UI as data."""
+
+    error: str
+
+
+# The field names below are the wire contract the UI cards read, hence the camelCase.
+@dataclass(frozen=True)
+class CurrentWeather:
+    """Current conditions at a set of coordinates."""
+
+    location: str
+    conditions: str
+    temperature: str
+    feelsLike: str
+    humidity: str
+    wind: str
+    precipitation: str
+    dataTime: str
+
+
+@dataclass(frozen=True)
+class ForecastDay:
+    """One day of a weekly forecast."""
+
+    date: str
+    conditions: str
+    tempMax: str
+    tempMin: str
+    precipitation: str
+    precipitationProbability: str
+
+
+@dataclass(frozen=True)
+class WeeklyForecast:
+    """A seven-day forecast at a set of coordinates."""
+
+    location: str
+    timezone: str
+    days: list[ForecastDay]
+
+
+async def _geocode_city(city: str, country: str = "") -> Location:
+    """Convert a city name to a Location using the Open-Meteo geocoding API."""
     params = {"name": city, "count": "5", "language": "en", "format": "json"}
-    with httpx.Client(timeout=10.0) as client:
-        response = client.get(GEOCODING_URL, params=params)
-        response.raise_for_status()
-        data = response.json()
+    response = await _http.get(GEOCODING_URL, params=params)
+    response.raise_for_status()
+    data = response.json()
     if "results" not in data or not data["results"]:
         raise ValueError(
             f"City '{city}' not found. Please check the spelling or try a different city name."
@@ -65,35 +109,59 @@ def _geocode_city(city: str, country: str = "") -> Location:
 
 
 @tool(
-    description="Get latitude and longitude for a city (and optional country). Use when you need coordinates for a place name, e.g. to pass to other tools or to confirm a location.",
+    description=(
+        "Resolve a city (and optional country code) to a location: its name, country, "
+        "region and coordinates. Use when you need coordinates for a place name, e.g. to "
+        "pass to the weather tools, or to confirm which city was matched."
+    ),
 )
-def get_coords_by_city(
-    context_variables: ContextVariables,
+async def get_coords_by_city(
+    context: Context,
     city: Annotated[
-        str,
-        "The city name (e.g., 'London', 'New York', 'Tokyo')",
+        str, Field(description="The city name (e.g., 'London', 'New York', 'Tokyo')")
     ],
     country: Annotated[
-        str,
-        "Optional country code to disambiguate (e.g., 'US', 'UK')",
+        str, Field(description="Optional country code to disambiguate (e.g., 'US', 'GB')")
     ] = "",
-) -> ReplyResult:
+) -> Location | ToolError:
     try:
-        location = _geocode_city(city, country)
-        context_variables.set("location", location)
-        return ReplyResult(
-            message=json.dumps(asdict(location.coordinates)),
-            context_variables=context_variables,
-        )
+        location = await _geocode_city(city, country)
+        context.variables["location"] = location
+        return location
     except ValueError as e:
-        return str(e)
+        return ToolError(str(e))
     except httpx.HTTPError as e:
-        return f"Error fetching coordinates: {str(e)}"
+        return ToolError(f"Error fetching coordinates: {str(e)}")
     except Exception as e:
-        return f"Unexpected error: {str(e)}"
+        return ToolError(f"Unexpected error: {str(e)}")
 
 
-def _fetch_current_weather_at_coords(coords: Coordinates) -> dict:
+# Coordinates round-trip through the model as JSON numbers and can come back at a different
+# precision, so the cached Location is matched on a tolerance rather than on equality. A
+# hundredth of a degree is about a kilometre — close enough to be the same place.
+_SAME_PLACE_DEGREES = 0.01
+
+
+def _location_label(heading: str, coords: Coordinates, location: Location | None) -> str:
+    """Name the place the numbers actually describe.
+
+    The cached Location supplies its name only while its Coordinates agree with the
+    Coordinates being reported on. Otherwise the label falls back to the Coordinates, so
+    that the heading is vague rather than wrong.
+    """
+    if location and _is_same_place(location.coordinates, coords):
+        return f"{heading} at {location.name}, {location.country}"
+    return f"{heading} at {coords.latitude:.2f}, {coords.longitude:.2f}"
+
+
+def _is_same_place(a: Coordinates, b: Coordinates) -> bool:
+    return (
+        abs(a.latitude - b.latitude) <= _SAME_PLACE_DEGREES
+        and abs(a.longitude - b.longitude) <= _SAME_PLACE_DEGREES
+    )
+
+
+async def _fetch_current_weather_at_coords(coords: Coordinates) -> dict:
     params = {
         "latitude": str(coords.latitude),
         "longitude": str(coords.longitude),
@@ -108,14 +176,13 @@ def _fetch_current_weather_at_coords(coords: Coordinates) -> dict:
         ],
         "timezone": "auto",
     }
-    with httpx.Client(timeout=10.0) as client:
-        response = client.get(WEATHER_URL, params=params)
-        response.raise_for_status()
-        return response.json()
+    response = await _http.get(WEATHER_URL, params=params)
+    response.raise_for_status()
+    return response.json()
 
 
-def _fetch_weekly_forecast_at_coords(coords: Coordinates) -> dict:
-    """Fetch 7-day daily forecast from Open-Meteo."""
+async def _fetch_weekly_forecast_at_coords(coords: Coordinates) -> dict:
+    """Fetch the 7-day daily forecast from Open-Meteo."""
     params = {
         "latitude": str(coords.latitude),
         "longitude": str(coords.longitude),
@@ -129,161 +196,116 @@ def _fetch_weekly_forecast_at_coords(coords: Coordinates) -> dict:
         "timezone": "auto",
         "forecast_days": 7,
     }
-    with httpx.Client(timeout=10.0) as client:
-        response = client.get(WEATHER_URL, params=params)
-        response.raise_for_status()
-        return response.json()
+    response = await _http.get(WEATHER_URL, params=params)
+    response.raise_for_status()
+    return response.json()
 
 
 @tool(
-    description="Get the current weather at a location given its latitude and longitude. Use this when you have coordinates (e.g. from getUserLocation). Returns temperature, humidity, wind, and conditions.",
+    description=(
+        "Get the current weather at a set of coordinates. Use this when you have "
+        "coordinates, e.g. from get_coords_by_city or from the getUserLocation frontend "
+        "tool. Returns temperature, humidity, wind, and conditions."
+    ),
 )
-def get_current_weather_by_coords(
-    context_variables: ContextVariables,
-    coords: Annotated[Coordinates, "The coordinates of the location"],
-) -> dict:
-    """
-    Get the current weather at coordinates (e.g. from user's device location).
-
-    Args:
-        latitude: Latitude (-90 to 90)
-        longitude: Longitude (-180 to 180)
-
-    Returns:
-        A dict with current weather information
-    """
+async def get_current_weather_by_coords(
+    coords: Annotated[
+        Coordinates, Field(description="The coordinates to report the weather for")
+    ],
+    location: Annotated[Location | None, Variable(default=None)] = None,
+) -> CurrentWeather | ToolError:
     try:
-        if location := context_variables.get("location"):
-            coords = location.coordinates
-            location_label = f"Current Weather at {location.name}, {location.country}"
-        else:
-            coords = coords
-            location_label = f"Current Weather at your location ({coords.latitude:.2f}, {coords.longitude:.2f})"
-
-        data = _fetch_current_weather_at_coords(coords)
+        data = await _fetch_current_weather_at_coords(coords)
         current = data["current"]
         units = data["current_units"]
-        weather_desc = _get_weather_description(current["weather_code"])
-        return {
-            "location": location_label,
-            "conditions": weather_desc,
-            "temperature": f"{current['temperature_2m']}{units['temperature_2m']}",
-            "feelsLike": f"{current['apparent_temperature']}{units['apparent_temperature']}",
-            "humidity": f"{current['relative_humidity_2m']}{units['relative_humidity_2m']}",
-            "wind": (
+        return CurrentWeather(
+            location=_location_label("Current Weather", coords, location),
+            conditions=_get_weather_description(current["weather_code"]),
+            temperature=f"{current['temperature_2m']}{units['temperature_2m']}",
+            feelsLike=f"{current['apparent_temperature']}{units['apparent_temperature']}",
+            humidity=f"{current['relative_humidity_2m']}{units['relative_humidity_2m']}",
+            wind=(
                 f"{current['wind_speed_10m']} {units['wind_speed_10m']} "
                 f"from {current['wind_direction_10m']}{units['wind_direction_10m']}"
             ),
-            "precipitation": f"{current['precipitation']} {units['precipitation']}",
-            "dataTime": f"{current['time']} ({data['timezone']})",
-        }
+            precipitation=f"{current['precipitation']} {units['precipitation']}",
+            dataTime=f"{current['time']} ({data['timezone']})",
+        )
 
     except httpx.HTTPError as e:
-        return {"error": f"Error fetching weather data: {str(e)}"}
+        return ToolError(f"Error fetching weather data: {str(e)}")
     except Exception as e:
-        return {"error": f"Unexpected error: {str(e)}"}
+        return ToolError(f"Unexpected error: {str(e)}")
 
 
 @tool(
-    description="Get the 7-day weather forecast at a location given its latitude and longitude. Use when the user asks about weather next week, the week ahead, or upcoming days. Use after get_coords_by_city or with coordinates from getUserLocation.",
+    description=(
+        "Get the 7-day weather forecast at a set of coordinates. Use when the user asks "
+        "about the weather next week, the week ahead, or the upcoming days. Use after "
+        "get_coords_by_city, or with coordinates from the getUserLocation frontend tool."
+    ),
 )
-def get_weather_next_week(
-    context_variables: ContextVariables,
-    coords: Annotated[Coordinates, "The coordinates of the location"],
-) -> dict:
-    """
-    Get the next 7 days weather forecast at coordinates.
-
-    Returns:
-        A dict with daily forecast: date, conditions, high/low temps, precipitation.
-    """
+async def get_weather_next_week(
+    coords: Annotated[
+        Coordinates, Field(description="The coordinates to report the forecast for")
+    ],
+    location: Annotated[Location | None, Variable(default=None)] = None,
+) -> WeeklyForecast | ToolError:
     try:
-        if location := context_variables.get("location"):
-            coords = location.coordinates
-            location_label = f"Weekly Forecast at {location.name}, {location.country}"
-        else:
-            location_label = f"Weekly Forecast at your location ({coords.latitude:.2f}, {coords.longitude:.2f})"
-
-        data = _fetch_weekly_forecast_at_coords(coords)
+        data = await _fetch_weekly_forecast_at_coords(coords)
         daily = data["daily"]
         units = data["daily_units"]
-        days = []
-        for i in range(len(daily["time"])):
-            days.append({
-                "date": daily["time"][i],
-                "conditions": _get_weather_description(daily["weather_code"][i]),
-                "tempMax": f"{daily['temperature_2m_max'][i]}{units['temperature_2m_max']}",
-                "tempMin": f"{daily['temperature_2m_min'][i]}{units['temperature_2m_min']}",
-                "precipitation": f"{daily['precipitation_sum'][i]} {units['precipitation_sum']}",
-                "precipitationProbability": f"{daily['precipitation_probability_max'][i]}{units['precipitation_probability_max']}",
-            })
-        return {
-            "location": location_label,
-            "timezone": data["timezone"],
-            "days": days,
-        }
+        days = [
+            ForecastDay(
+                date=daily["time"][i],
+                conditions=_get_weather_description(daily["weather_code"][i]),
+                tempMax=f"{daily['temperature_2m_max'][i]}{units['temperature_2m_max']}",
+                tempMin=f"{daily['temperature_2m_min'][i]}{units['temperature_2m_min']}",
+                precipitation=f"{daily['precipitation_sum'][i]} {units['precipitation_sum']}",
+                precipitationProbability=f"{daily['precipitation_probability_max'][i]}{units['precipitation_probability_max']}",
+            )
+            for i in range(len(daily["time"]))
+        ]
+        return WeeklyForecast(
+            location=_location_label("Weekly Forecast", coords, location),
+            timezone=data["timezone"],
+            days=days,
+        )
 
     except httpx.HTTPError as e:
-        return {"error": f"Error fetching forecast: {str(e)}"}
+        return ToolError(f"Error fetching forecast: {str(e)}")
     except Exception as e:
-        return {"error": f"Unexpected error: {str(e)}"}
+        return ToolError(f"Unexpected error: {str(e)}")
 
 
-agent = ConversableAgent(
-    name="WeatherAgent",
-    description=dedent("""
-        Global weather information specialist providing real-time weather conditions
-        and 7-day forecasts for cities worldwide. Get current temperature, humidity,
-        wind conditions, precipitation, or the week ahead.
+agent = Agent(
+    "WeatherAgent",
+    prompt=dedent("""
+        You are a helpful weather assistant. Answer weather questions with the available
+        tools; each tool's own description says when it applies.
 
-        Capabilities:
+        A weather tool needs coordinates, so resolve the place first.
+        - For "weather here", "my location", "where I am", or similar: call the
+          getUserLocation frontend tool, then pass the coordinates it returns to the
+          weather tool the question calls for.
+        - If getUserLocation fails (e.g. permission denied or location unavailable): ask
+          the user for their city name ("I couldn't get your location. Which city would
+          you like the weather for?").
+        - For a city name: resolve it with get_coords_by_city, passing a country code when
+          the name is ambiguous.
 
-        Current Weather
-        - Real-time temperature (actual and feels-like)
-        - Weather conditions (clear, cloudy, rain, snow, etc.)
-        - Humidity levels and precipitation
-        - Wind speed and direction
-        - Data for any city worldwide
+        Always be clear about which city you're reporting on — get_coords_by_city tells you
+        which one it matched, and it is not always the one you asked for. If a request is
+        unclear, ask for clarification.
 
-        Weekly Forecast
-        - 7-day daily forecast (high/low temps, conditions, precipitation)
-        - Use get_weather_next_week when the user asks about next week or upcoming days
-
-        Location Support
-        - Works with city names globally
-        - Supports country codes for disambiguation
-        - Automatic timezone detection
-        - Coordinates-based precision
-        - Whenever you need the user's current position: call the getUserLocation frontend tool
-          first. If it succeeds, use get_current_weather_by_coords(coordinates).
-          If getUserLocation fails (error returned), ask the user for their city name and use
-          get_coords_by_city(city, country), then use get_current_weather_by_coords(coordinates).
-    """),
-    system_message=dedent("""
-        You are a helpful weather assistant. When users ask about weather,
-        use the available tools to fetch current conditions or forecasts.
-
-        Getting the user's location:
-        - For "weather here", "my location", "current location", "where I am", or similar: first
-          call the getUserLocation frontend tool to get latitude and longitude.
-        - If getUserLocation succeeds: use get_current_weather_by_coords(latitude, longitude) for
-          current weather.
-        - If getUserLocation fails (returns an error, e.g. permission denied or location unavailable):
-          fall back to asking the user for their city name (e.g. "I couldn't get your location.
-          Which city would you like the weather for?"). Then use get_coords_by_city(city, country),
-          then use get_current_weather_by_coords(coordinates).
-
-        For explicit city names: use get_coords_by_city(city, country), then use get_current_weather_by_coords(coordinates) or get_weather_next_week(coordinates) for the week ahead.
-        For "weather next week", "week ahead", "next 7 days": use get_weather_next_week (after resolving location as above).
-        Always be clear about which city you're reporting on. If a user's request is unclear
-        (e.g. which city they mean), ask for clarification. Provide weather information in a
-        clear, easy-to-read format.
-
-        After calling any tool, make a detailed reply with your information summary.
-        Your reply should be a single paragraph, not a list of items.
-        Let UI tools to render the tool result. Your text answer should be concise and informative summary."""),
-    llm_config=LLMConfig({"model": "gpt-5"}),
-    functions=[
+        After calling a tool, reply with a single paragraph summarising the result, not a
+        list of items. The UI renders the tool result as a card, so keep your text answer a
+        concise, informative summary."""),
+    config=OpenAIResponsesConfig(
+        model="gpt-5.6-sol",
+        streaming=True,
+    ),
+    tools=[
         get_coords_by_city,
         get_current_weather_by_coords,
         get_weather_next_week,

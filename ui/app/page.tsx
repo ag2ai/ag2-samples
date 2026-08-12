@@ -75,12 +75,24 @@ export default function Home() {
       The user will be prompted to allow location access if not already granted.`,
         parameters: [],
         handler: async () => {
-            const position = await getUserPosition();
-            return {
-                latitude: position.latitude,
-                longitude: position.longitude,
-                accuracy: position.accuracy,
-            };
+            // Report a refused or unavailable location as data, the way the backend tools
+            // report a failed upstream call. Throwing here would fail the whole run, and the
+            // agent could never reach its documented fallback of asking for a city name.
+            try {
+                const position = await getUserPosition();
+                return {
+                    latitude: position.latitude,
+                    longitude: position.longitude,
+                    accuracy: position.accuracy,
+                };
+            } catch (error) {
+                return {
+                    error:
+                        error instanceof Error
+                            ? error.message
+                            : "Could not determine your location.",
+                };
+            }
         },
     });
 
@@ -168,52 +180,28 @@ type CurrentWeatherResult = {
     dataTime?: string;
 };
 
-function normalizeCurrentWeatherResult(result: unknown): CurrentWeatherResult | null {
-    if (typeof result === "string") {
-        // Try JSON first
+/**
+ * Tool results arrive as JSON on the AG-UI wire: the backend returns a dataclass and AG2
+ * serialises it into the tool-result event's content.
+ */
+function parseToolResult<T>(result: unknown): T | null {
+    let value = result;
+    if (typeof value === "string") {
         try {
-            return normalizeCurrentWeatherResult(JSON.parse(result));
+            value = JSON.parse(value);
         } catch {
-            // Fall back to Python dict repr (single quotes)
-            try {
-                const jsonStr = result
-                    .replace(/^"|"$/g, "")  // Remove outer quotes if present
-                    .split(/(?<=\})\s*(?=\{)/)[0]  // Take first dict if duplicated
-                    .replace(/'/g, '"')  // Convert single quotes to double quotes
-                    .replace(/\bNone\b/g, "null")
-                    .replace(/\bTrue\b/g, "true")
-                    .replace(/\bFalse\b/g, "false");
-                return normalizeCurrentWeatherResult(JSON.parse(jsonStr));
-            } catch {
-                return null;
-            }
+            return null;
         }
     }
-
-    if (!result || typeof result !== "object") {
+    // A scalar or an array is not a result object: fall through to the raw payload.
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
         return null;
     }
-
-    const data = result as Record<string, unknown>;
-    const out: CurrentWeatherResult = {};
-    if (typeof data.error === "string") {
-        return { error: data.error };
-    }
-
-    if (typeof data.location === "string") out.location = data.location;
-    if (typeof data.conditions === "string") out.conditions = data.conditions;
-    if (typeof data.temperature === "string") out.temperature = data.temperature;
-    if (typeof data.feelsLike === "string") out.feelsLike = data.feelsLike;
-    if (typeof data.humidity === "string") out.humidity = data.humidity;
-    if (typeof data.wind === "string") out.wind = data.wind;
-    if (typeof data.precipitation === "string") out.precipitation = data.precipitation;
-    if (typeof data.dataTime === "string") out.dataTime = data.dataTime;
-
-    return Object.keys(out).length > 0 ? out : null;
+    return value as T;
 }
 
 function CurrentWeatherCard({ result }: { result: unknown }) {
-    const parsed = normalizeCurrentWeatherResult(result);
+    const parsed = parseToolResult<CurrentWeatherResult>(result);
     const isError = parsed?.error;
 
     if (isError) {
@@ -316,97 +304,6 @@ type WeeklyForecastResult = {
     days?: WeeklyForecastDay[];
 };
 
-/** Extract the first balanced {...} or [...] from a string (handles nested braces and quoted content). */
-function extractFirstObjectString(str: string): string | null {
-    const start = str.indexOf("{");
-    if (start === -1) return null;
-    let depth = 0;
-    let i = start;
-    let inString = false;
-    let quoteChar: string | null = null;
-    while (i < str.length) {
-        if (inString) {
-            if (str[i] === "\\") {
-                i += 2;
-                continue;
-            }
-            if (str[i] === quoteChar) {
-                inString = false;
-                quoteChar = null;
-            }
-            i++;
-            continue;
-        }
-        if (str[i] === '"' || str[i] === "'") {
-            inString = true;
-            quoteChar = str[i];
-            i++;
-            continue;
-        }
-        if (str[i] === "{") depth++;
-        else if (str[i] === "}") {
-            depth--;
-            if (depth === 0) return str.slice(start, i + 1);
-        }
-        i++;
-    }
-    return null;
-}
-
-function normalizeWeeklyForecastResult(result: unknown): WeeklyForecastResult | null {
-    if (typeof result === "string") {
-        let toParse = result.trim().replace(/^"|"$/g, "");
-        const firstObj = extractFirstObjectString(toParse);
-        if (firstObj) toParse = firstObj;
-        try {
-            return normalizeWeeklyForecastResult(JSON.parse(toParse));
-        } catch {
-            try {
-                const jsonStr = toParse
-                    .replace(/'/g, '"')
-                    .replace(/\bNone\b/g, "null")
-                    .replace(/\bTrue\b/g, "true")
-                    .replace(/\bFalse\b/g, "false");
-                return normalizeWeeklyForecastResult(JSON.parse(jsonStr));
-            } catch {
-                return null;
-            }
-        }
-    }
-
-    if (Array.isArray(result) && result.length > 0) {
-        return normalizeWeeklyForecastResult(result[0]);
-    }
-
-    if (!result || typeof result !== "object") {
-        return null;
-    }
-
-    const data = result as Record<string, unknown>;
-    if (typeof data.error === "string") {
-        return { error: data.error };
-    }
-
-    const out: WeeklyForecastResult = {};
-    if (typeof data.location === "string") out.location = data.location;
-    if (typeof data.timezone === "string") out.timezone = data.timezone;
-    if (Array.isArray(data.days)) {
-        out.days = data.days
-            .filter((d): d is Record<string, unknown> => d != null && typeof d === "object")
-            .map((d) => ({
-                date: typeof d.date === "string" ? d.date : "",
-                conditions: typeof d.conditions === "string" ? d.conditions : "",
-                tempMax: typeof d.tempMax === "string" ? d.tempMax : "",
-                tempMin: typeof d.tempMin === "string" ? d.tempMin : "",
-                precipitation: typeof d.precipitation === "string" ? d.precipitation : "",
-                precipitationProbability:
-                    typeof d.precipitationProbability === "string" ? d.precipitationProbability : "",
-            }));
-    }
-
-    return out.location != null || (out.days != null && out.days.length > 0) ? out : null;
-}
-
 function formatForecastDate(dateStr: string): string {
     if (!dateStr) return "";
     try {
@@ -418,7 +315,7 @@ function formatForecastDate(dateStr: string): string {
 }
 
 function WeeklyForecastCard({ result }: { result: unknown }) {
-    const parsed = normalizeWeeklyForecastResult(result);
+    const parsed = parseToolResult<WeeklyForecastResult>(result);
     const isError = parsed?.error;
 
     if (isError) {
