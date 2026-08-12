@@ -1,0 +1,8 @@
+# pnpm requires each dependency's postinstall script to be reviewed explicitly.
+allowBuilds:
+  # Next.js image optimisation.
+  sharp: true
+  # Backs the ESLint import resolver.
+  unrs-resolver: true
+  # Analytics collector, pulled in transitively. Deliberately not run.
+  "@scarf/scarf": false
