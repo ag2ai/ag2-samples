@@ -1,15 +1,18 @@
 "use client";
 
-import { useState } from "react";
-import { useRenderToolCall, useFrontendTool } from "@copilotkit/react-core";
 import {
     CopilotChat,
-    CopilotKitCSSProperties,
-    InputProps,
-} from "@copilotkit/react-ui";
+    useFrontendTool,
+    useRenderTool,
+} from "@copilotkit/react-core/v2";
+import { z } from "zod";
+
+// The tools take structured arguments the cards do not show, so the renderers accept any.
+const anyArguments = z.looseObject({});
 
 export default function Home() {
-    useRenderToolCall({
+    useRenderTool({
+        parameters: anyArguments,
         name: "get_coords_by_city",
         render: ({ status }) => {
             if (status !== "complete") {
@@ -25,7 +28,8 @@ export default function Home() {
         },
     });
 
-    useRenderToolCall({
+    useRenderTool({
+        parameters: anyArguments,
         name: "get_current_weather_by_coords",
         render: ({ status, result }) => {
             if (status !== "complete") {
@@ -45,7 +49,8 @@ export default function Home() {
         },
     });
 
-    useRenderToolCall({
+    useRenderTool({
+        parameters: anyArguments,
         name: "get_weather_next_week",
         render: ({ status, result }) => {
             if (status !== "complete") {
@@ -73,7 +78,7 @@ export default function Home() {
       for example to provide weather for their area. The user will be prompted to allow
       location access if not already granted.
       The user will be prompted to allow location access if not already granted.`,
-        parameters: [],
+        parameters: z.object({}),
         handler: async () => {
             // Report a refused or unavailable location as data, the way the backend tools
             // report a failed upstream call. Throwing here would fail the whole run, and the
@@ -98,29 +103,16 @@ export default function Home() {
 
     return (
         <main className="dark min-h-screen bg-[#0d0d0d]">
-            <div
-                className="copilot-chat-dark relative h-screen py-10"
-                style={
-                    {
-                        "--copilot-kit-background-color": "#0d0d0d",
-                        "--copilot-kit-secondary-color": "#171717",
-                        "--copilot-kit-secondary-contrast-color": "#ececec",
-                        "--copilot-kit-separator-color": "#2e2e2e",
-                        "--copilot-kit-input-background-color": "#2a2a2a",
-                        "--copilot-kit-primary-color": "#2f2f2f",
-                        "--copilot-kit-contrast-color": "#ececec",
-                    } as CopilotKitCSSProperties
-                }
-            >
+            <div className="relative h-screen py-10">
                 <div className="relative h-full w-[50%] mx-auto flex flex-col">
                     <CopilotChat
+                        agentId="agenticChatAgent"
                         className="h-full flex-1 min-h-0"
                         labels={{
-                            title: "Weather Assistant",
-                            initial:
+                            modalHeaderTitle: "Weather Assistant",
+                            welcomeMessageText:
                                 "Hello! I'm a weather assistant and ready to help you with your weather questions.",
                         }}
-                        Input={CustomInput}
                     />
                 </div>
             </div>
@@ -387,79 +379,6 @@ function WeeklyForecastCard({ result }: { result: unknown }) {
                     </div>
                 ))}
             </div>
-        </div>
-    );
-}
-
-function CustomInput({
-    inProgress,
-    onSend,
-    onStop,
-    hideStopButton,
-    chatReady,
-}: InputProps) {
-    const [input, setInput] = useState("");
-    const isLlmGenerating = inProgress || !chatReady;
-
-    const handleSend = async () => {
-        const text = input.trim();
-        if (!text || isLlmGenerating) return;
-        setInput("");
-        await onSend(text);
-    };
-
-    return (
-        <div className="w-full sticky bottom-0 right-0 z-20 mt-6">
-            {isLlmGenerating && <ThinkingBlock />}
-
-            <div className="flex items-end">
-                <div className="relative flex-1">
-                    <textarea
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        onKeyDown={(e) => {
-                            if (e.key === "Enter" && !e.shiftKey) {
-                                e.preventDefault();
-                                handleSend();
-                            }
-                        }}
-                        placeholder={isLlmGenerating ? "Thinking..." : "Type a message..."}
-                        disabled={isLlmGenerating}
-                        rows={1}
-                        className="w-full resize-none rounded-3xl max-h-[200px] overflow-y-auto px-4 py-4 text-md leading-6 focus:outline-none focus:ring-2 focus:ring-primary-500/20 bg-zinc-800 text-white disabled:opacity-50 disabled:cursor-not-allowed pr-12"
-                    />
-
-                    {isLlmGenerating && !hideStopButton && onStop ? (
-                        <button
-                            onClick={onStop}
-                            className="absolute right-2 bottom-4 p-2 bg-gray-500 text-white rounded-full hover:bg-gray-600 transition-colors"
-                            title="Stop generating"
-                        >
-                            ■
-                        </button>
-                    ) : (
-                        <button
-                            onClick={handleSend}
-                            disabled={!input.trim()}
-                            className="absolute right-2 bottom-4 p-2 bg-primary-500 text-white rounded-full hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                            title="Send message"
-                        >
-                            ➤
-                        </button>
-                    )}
-                </div>
-            </div>
-        </div>
-    );
-}
-
-function ThinkingBlock() {
-    return (
-        <div className="mx-auto flex items-center gap-2 px-4 py-2.5 text-sm text-gray-400 w-fit shrink-0 mb-2">
-            <span>Thinking</span>
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-gray-500 animate-pulse" />
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-gray-500 animate-pulse [animation-delay:0.2s]" />
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-gray-500 animate-pulse [animation-delay:0.4s]" />
         </div>
     );
 }

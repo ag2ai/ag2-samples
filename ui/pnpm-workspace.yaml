@@ -6,3 +6,5 @@ allowBuilds:
   unrs-resolver: true
   # Analytics collector, pulled in transitively. Deliberately not run.
   "@scarf/scarf": false
+minimumReleaseAgeExclude:
+  - '@types/node@26.6.4'
