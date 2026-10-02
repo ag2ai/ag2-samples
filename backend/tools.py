@@ -4,6 +4,7 @@ from typing import Annotated
 
 import httpx2
 from ag2 import Context, Inject, Variable, tool
+from ag2.middleware.builtin.tools.approval import ApprovalRequired
 from pydantic import Field
 
 from . import openmeteo
@@ -136,3 +137,33 @@ async def get_current_user(user: Annotated[User, Inject()]) -> User:
     # The User comes from dependencies, which only the backend's route fills in — never
     # from shared state, which the client can write to.
     return user
+
+
+@tool(
+    description=(
+        "Save a city to the user's favorites. Use only when the user asks to save, pin or "
+        "remember a city. The user is asked to confirm before anything is saved."
+    ),
+    # The call is held as an AG-UI interrupt until the client approves or rejects it, so
+    # the UI renders a confirmation instead of the agent acting on its own.
+    middleware=[
+        ApprovalRequired(
+            "Save this city to your favorites?\n{tool_arguments}", allow_always=False
+        )
+    ],
+)
+async def save_favorite_city(
+    context: Context,
+    city: Annotated[str, Field(description="The city name to save, e.g. 'Lisbon'")],
+    country: Annotated[
+        str, Field(description="Optional country code to disambiguate (e.g., 'PT')")
+    ] = "",
+) -> list[str]:
+    # Variables are sent to the client as the shared state snapshot, which the UI shows
+    # as the favorites panel.
+    favorites = list(context.variables.get("favorites", []))
+    label = f"{city}, {country}" if country else city
+    if label not in favorites:
+        favorites.append(label)
+    context.variables["favorites"] = favorites
+    return favorites

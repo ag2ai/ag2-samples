@@ -96,6 +96,18 @@ only while that city's coordinates match the ones being reported on; otherwise i
 the coordinates themselves. So asking about London and then about your own location gives you
 your own weather, never London's.
 
+## AG-UI 1.0 features in this sample
+
+| Feature | Where | Try it |
+|---|---|---|
+| Sub-agents (`SUBAGENT_*`) | `ClothingAdvisor` and `TripPlanner` in `backend/agent.py`, shown in the side panel | "What should I wear in Oslo?", "Compare London, Rome and Oslo" |
+| Interrupts (human in the loop) | `save_favorite_city` is held by `ApprovalRequired`, the UI answers with `useInterrupt` | "Save Lisbon to my favorites" |
+| Shared state (`STATE_SNAPSHOT`) | `context.variables` (`favorites`, `location`), read in the UI with `useAgent` | Same as above, then watch the panel |
+| Capabilities discovery | `GET /weather` returns the agent's sub-agents and interrupt support | `curl localhost:8000/weather` |
+
+Reasoning events (`REASONING_*`) are mapped by AG2 when a model returns reasoning, but
+`OpenAIResponsesConfig` has no option to request summaries, so this sample does not show them.
+
 ## Authorization
 
 The backend serves the agent only to a signed-in **User**. A User is whoever a verified

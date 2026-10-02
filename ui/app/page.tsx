@@ -3,12 +3,30 @@
 import {
     CopilotChat,
     useFrontendTool,
+    useInterrupt,
     useRenderTool,
 } from "@copilotkit/react-core/v2";
 import { z } from "zod";
+import { AgentPanel } from "@/components/agent-panel";
 
 // The tools take structured arguments the cards do not show, so the renderers accept any.
 const anyArguments = z.looseObject({});
+
+// A sub-agent is delegated to through a `task_<name>` tool, so its call renders like any tool.
+function useSubagentRenderer(name: string) {
+    useRenderTool({
+        parameters: anyArguments,
+        name: `task_${name}`,
+        render: ({ status, parameters, result }) => (
+            <ToolCallCard
+                title={`Sub-agent: ${name}`}
+                status={status === "complete" ? "complete" : "running"}
+                args={{ objective: parameters?.objective }}
+                result={typeof result === "string" ? result : undefined}
+            />
+        ),
+    });
+}
 
 export default function Home() {
     useRenderTool({
@@ -70,6 +88,47 @@ export default function Home() {
         },
     });
 
+    useSubagentRenderer("ClothingAdvisor");
+    useSubagentRenderer("TripPlanner");
+
+    // A tool the backend holds for approval arrives as an AG-UI interrupt. The backend
+    // reads the answer as a boolean, so resolving with true/false is the whole reply.
+    useInterrupt({
+        agentId: "agenticChatAgent",
+        render: ({ interrupt, resolve }) => (
+            <div className="rounded-xl border border-amber-900/50 bg-amber-950/20 p-3 text-sm space-y-3">
+                <p className="text-amber-100 whitespace-pre-wrap">
+                    {interrupt?.message ?? "The assistant needs your confirmation."}
+                </p>
+                <div className="flex gap-2">
+                    <button
+                        className="px-3 py-1 rounded-md bg-emerald-600 text-white text-xs"
+                        onClick={() => resolve(true)}
+                    >
+                        Approve
+                    </button>
+                    <button
+                        className="px-3 py-1 rounded-md bg-[#2e2e2e] text-gray-200 text-xs"
+                        onClick={() => resolve(false)}
+                    >
+                        Reject
+                    </button>
+                </div>
+            </div>
+        ),
+    });
+
+    useRenderTool({
+        parameters: anyArguments,
+        name: "save_favorite_city",
+        render: ({ status }) =>
+            status !== "complete" ? (
+                <div className="text-gray-500 text-sm py-2">Saving favorite…</div>
+            ) : (
+                <></>
+            ),
+    });
+
     useFrontendTool({
         name: "getUserLocation",
         description:
@@ -104,7 +163,7 @@ export default function Home() {
     return (
         <main className="dark min-h-screen bg-[#0d0d0d]">
             <div className="relative h-screen py-10">
-                <div className="relative h-full w-[50%] mx-auto flex flex-col">
+                <div className="relative h-full w-[70%] max-w-5xl mx-auto flex gap-6">
                     <CopilotChat
                         agentId="agenticChatAgent"
                         className="h-full flex-1 min-h-0"
@@ -114,6 +173,7 @@ export default function Home() {
                                 "Hello! I'm a weather assistant and ready to help you with your weather questions.",
                         }}
                     />
+                    <AgentPanel />
                 </div>
             </div>
         </main>

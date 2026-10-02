@@ -93,3 +93,57 @@ async def test_user_is_not_sent_back_in_state(make_client, run_input):
 
     state_frames = [e for e in sse_events(response) if e["type"] in ("STATE_SNAPSHOT", "STATE_DELTA")]
     assert all("Ada" not in json.dumps(e) for e in state_frames)
+
+
+async def test_capabilities_announce_subagents_and_interrupts(make_client):
+    client = make_client()
+
+    capabilities = (await client.get("/weather")).json()
+
+    names = {s["name"] for s in capabilities["multiAgent"]["subagents"]}
+    assert names == {"ClothingAdvisor", "TripPlanner"}
+    assert capabilities["humanInTheLoop"]["interrupts"] is True
+
+
+async def _interrupted_save(client, run_input):
+    first = await client.post("/weather", json=run_input("save Lisbon"))
+    [interrupt] = sse_events(first)[-1]["outcome"]["interrupts"]
+    return interrupt
+
+
+async def test_saving_a_favorite_waits_for_approval_then_updates_shared_state(make_client, run_input):
+    client = make_client(
+        TestConfig(call("save_favorite_city", city="Lisbon", country="PT"), "Saved."), user=ADA
+    )
+
+    interrupt = await _interrupted_save(client, run_input)
+    assert interrupt["reason"] == "tool_call"
+
+    resumed = await client.post(
+        "/weather",
+        json=run_input(
+            "save Lisbon",
+            resume=[{"interruptId": interrupt["id"], "status": "resolved", "payload": True}],
+        ),
+    )
+
+    snapshots = [e["snapshot"] for e in sse_events(resumed) if e["type"] == "STATE_SNAPSHOT"]
+    assert snapshots[-1]["favorites"] == ["Lisbon, PT"]
+
+
+async def test_rejecting_the_approval_saves_nothing(make_client, run_input):
+    client = make_client(
+        TestConfig(call("save_favorite_city", city="Lisbon"), "Okay, not saved."), user=ADA
+    )
+
+    interrupt = await _interrupted_save(client, run_input)
+    resumed = await client.post(
+        "/weather",
+        json=run_input(
+            "save Lisbon",
+            resume=[{"interruptId": interrupt["id"], "status": "resolved", "payload": False}],
+        ),
+    )
+
+    snapshots = [e["snapshot"] for e in sse_events(resumed) if e["type"] == "STATE_SNAPSHOT"]
+    assert not snapshots or "favorites" not in snapshots[-1]
