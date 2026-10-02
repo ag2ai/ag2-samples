@@ -2,7 +2,9 @@
 
 An AG2 weather agent exposed to a React chat over the **AG-UI** protocol. Ask for current
 weather by city name or from your browser location; the agent uses
-[Open-Meteo](https://open-meteo.com/) (no API key) for weather data and an LLM for conversation.
+[Open-Meteo](https://open-meteo.com/) (no API key) for weather data and an OpenAI model
+(`gpt-5.6-sol` via the Responses API, streamed) for conversation. Access is limited to signed-in
+users (see [Authorization](#authorization)).
 
 ## Prerequisites
 
@@ -32,7 +34,7 @@ uv run python -m backend
 ```
 
 The backend serves the agent at `http://localhost:8000/weather/`. Every run needs an Access token
-(see [Authorisation](#authorisation)).
+(see [Authorization](#authorization)).
 
 #### Environment variables
 
@@ -64,6 +66,20 @@ Open http://localhost:3000 in your browser, enter a name to sign in, and ask for
 - "What's the weather here?" (uses browser location if allowed)
 - "What's the weather next week?" (seven-day forecast)
 
+## Project layout
+
+| Path | Purpose |
+|---|---|
+| `backend/agent.py` | The AG2 agent: prompt, model config and tool list |
+| `backend/tools.py` | Tools: `get_coords_by_city`, `get_current_weather_by_coords`, `get_weather_next_week`, `get_current_user` |
+| `backend/openmeteo.py` | Open-Meteo client: geocoding, current weather, forecast, location labels |
+| `backend/models.py` | Typed tool results the UI renders as cards (`Location`, `CurrentWeather`, `WeeklyForecast`, `User`, …) |
+| `backend/auth.py` | Access token verification (`verify_access_token`) |
+| `backend/routers/weather.py` | AG-UI routes: `GET /weather/` (capabilities) and `POST /weather/` (run, requires a token) |
+| `backend/app.py` | FastAPI app factory; `backend/__main__.py` starts it with uvicorn on port 8000 |
+| `ui/` | Next.js + CopilotKit chat, the token route and the CopilotKit runtime route |
+| `tests/` | Backend tests (auth and the weather endpoint) |
+
 ## What the agent does
 
 - **Current conditions** — temperature and feels-like, conditions, humidity, precipitation, wind
@@ -80,7 +96,7 @@ only while that city's coordinates match the ones being reported on; otherwise i
 the coordinates themselves. So asking about London and then about your own location gives you
 your own weather, never London's.
 
-## Authorisation
+## Authorization
 
 The backend serves the agent only to a signed-in **User**. A User is whoever a verified
 **Access token** says they are — never anything the client merely claims.
