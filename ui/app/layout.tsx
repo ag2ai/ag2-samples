@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 
-import { CopilotKit } from "@copilotkit/react-core";
+import { Session } from "../components/session";
 
-import "@copilotkit/react-ui/styles.css";
+import "@copilotkit/react-core/v2/styles.css";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -14,13 +14,7 @@ export default function RootLayout({ children }: { children: any }) {
   return (
     <html lang="en">
       <body>
-        <CopilotKit
-          agent="agenticChatAgent"
-          runtimeUrl="/api/copilotkit"
-          showDevConsole={false}
-        >
-          {children}
-        </CopilotKit>
+        <Session>{children}</Session>
       </body>
     </html>
   );
