@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10,<3.15"
 
 dependencies = [
-    "ag2[ag-ui,openai]>=1.1.1,<2",
+    "ag2[ag-ui,openai]>=1.1.2,<2",
     "fastapi>=0.142.2",
     "httpx2>=2.13.1",
     "pyjwt>=2.15.1",
@@ -15,10 +15,6 @@ dependencies = [
 
 [tool.uv]
 package = false
-
-# AG2 main carries AG-UI 1.0. Drop this once a release with it is published.
-[tool.uv.sources]
-ag2 = { git = "https://github.com/ag2ai/ag2.git", branch = "main" }
 
 [dependency-groups]
 dev = [
