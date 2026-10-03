@@ -33,7 +33,7 @@ export AUTH_SECRET="a-long-random-string"
 uv run python -m backend
 ```
 
-The backend serves the agent at `http://localhost:8000/weather/`. Every run needs an Access token
+The backend serves the agent at `http://localhost:8000/weather`. Every run needs an Access token
 (see [Authorization](#authorization)).
 
 #### Environment variables
@@ -54,7 +54,7 @@ pnpm install
 AUTH_SECRET="a-long-random-string" pnpm dev
 ```
 
-The app will be at **http://localhost:3000**. The UI talks to the backend at `http://localhost:8000/weather/`, so keep the backend running.
+The app will be at **http://localhost:3000**. The UI talks to the backend at `http://localhost:8000/weather`, so keep the backend running.
 
 ### 3. Use the app
 
@@ -75,7 +75,7 @@ Open http://localhost:3000 in your browser, enter a name to sign in, and ask for
 | `backend/openmeteo.py` | Open-Meteo client: geocoding, current weather, forecast, location labels |
 | `backend/models.py` | Typed tool results the UI renders as cards (`Location`, `CurrentWeather`, `WeeklyForecast`, `User`, …) |
 | `backend/auth.py` | Access token verification (`verify_access_token`) |
-| `backend/routers/weather.py` | AG-UI routes: `GET /weather/` (capabilities) and `POST /weather/` (run, requires a token) |
+| `backend/routers/weather.py` | AG-UI routes: `GET /weather` (capabilities) and `POST /weather` (run, requires a token) |
 | `backend/app.py` | FastAPI app factory; `backend/__main__.py` starts it with uvicorn on port 8000 |
 | `ui/` | Next.js + CopilotKit chat, the token route and the CopilotKit runtime route |
 | `tests/` | Backend tests (auth and the weather endpoint) |

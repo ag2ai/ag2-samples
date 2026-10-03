@@ -11,7 +11,7 @@ export const POST = async (req: NextRequest) => {
   const runtime = new CopilotRuntime({
     agents: {
       agenticChatAgent: new HttpAgent({
-        url: `http://localhost:8000/weather/`,
+        url: `http://localhost:8000/weather`,
         headers: { Authorization: req.headers.get("authorization") ?? "" },
       }),
     },

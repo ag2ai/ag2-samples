@@ -20,7 +20,6 @@ def create_router(
     router = APIRouter()
 
     @router.get("/weather")
-    @router.get("/weather/")
     async def capabilities() -> JSONResponse:
         return JSONResponse(stream.capabilities().model_dump(by_alias=True, exclude_none=True))
 
@@ -28,7 +27,6 @@ def create_router(
     # written out here to put the User and the HTTP client, and nothing else, into the
     # agent's dependencies.
     @router.post("/weather")
-    @router.post("/weather/")
     async def run(
         run_input: RunAgentInput,
         user: Annotated[User, Depends(authorised_user)],
